@@ -1,0 +1,60 @@
+{
+    "version": "2.0.0",
+    "options": {
+        "env": {
+            "PATH": "C:\\Users\\74411\\AppData\\Local\\stm32cube\\bundles\\cmake\\4.3.1+st.1\\bin;C:\\Users\\74411\\AppData\\Local\\stm32cube\\bundles\\ninja\\1.13.2+st.1\\bin;C:\\Users\\74411\\AppData\\Local\\stm32cube\\bundles\\gnu-tools-for-stm32\\14.3.1+st.2\\bin;${env:PATH}"
+        }
+    },
+    "tasks": [
+        {
+            "label": "Build STM32",
+            "type": "shell",
+            "command": "cmake",
+            "args": [
+                "--build",
+                "${workspaceFolder}/build/Debug",
+                "--config",
+                "Debug",
+                "-j",
+                "${command:cmake.buildCores}"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "problemMatcher": [
+                "$gcc"
+            ],
+            "detail": "Build STM32 firmware using CMake/Ninja"
+        },
+        {
+            "label": "Clean STM32",
+            "type": "shell",
+            "command": "cmake",
+            "args": [
+                "--build",
+                "${workspaceFolder}/build/Debug",
+                "--target",
+                "clean"
+            ],
+            "problemMatcher": []
+        },
+        {
+            "label": "Flash STM32 (OpenOCD)",
+            "type": "shell",
+            "command": "D:/OpenOCD-20260302-0.12.0/bin/openocd",
+            "args": [
+                "-s", "D:/OpenOCD-20260302-0.12.0/share/openocd/scripts",
+                "-f", "interface/cmsis-dap.cfg",
+                "-f", "target/stm32l0.cfg",
+                "-c", "adapter speed 950",
+                "-c", "program ${workspaceFolder}/build/Debug/Bishe.elf verify reset exit"
+            ],
+            "group": {
+                "kind": "test"
+            },
+            "problemMatcher": [],
+            "detail": "Flash firmware via OpenOCD + CMSIS-DAP"
+        }
+    ]
+}

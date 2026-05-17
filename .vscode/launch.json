@@ -1,0 +1,49 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Debug STM32L051 (OpenOCD + DAP)",
+            "type": "cortex-debug",
+            "request": "launch",
+            "cwd": "${workspaceFolder}",
+            "executable": "${workspaceFolder}/build/Debug/Bishe.elf",
+            "servertype": "openocd",
+            "device": "STM32L051C8",
+            "configFiles": [
+                "interface/cmsis-dap.cfg",
+                "target/stm32l0.cfg"
+            ],
+            "searchDir": [
+                "D:/OpenOCD-20260302-0.12.0/share/openocd/scripts"
+            ],
+            "openOCDpath": "D:/OpenOCD-20260302-0.12.0/bin",
+            "gdbPath": "C:/Users/74411/AppData/Local/stm32cube/bundles/gnu-tools-for-stm32/14.3.1+st.2/bin/arm-none-eabi-gdb.exe",
+            "svdFile": "${workspaceFolder}/.vscode/STM32L051x.svd",
+            "runToEntryPoint": "main",
+            "showDevDebugOutput": "raw",
+            "openOCDPreConfigLaunchCommands": [
+                "adapter speed 950"
+            ]
+        },
+        {
+            "name": "Attach STM32L051 (OpenOCD + DAP)",
+            "type": "cortex-debug",
+            "request": "attach",
+            "cwd": "${workspaceFolder}",
+            "executable": "${workspaceFolder}/build/Debug/Bishe.elf",
+            "servertype": "openocd",
+            "device": "STM32L051C8",
+            "configFiles": [
+                "interface/cmsis-dap.cfg",
+                "target/stm32l0.cfg"
+            ],
+            "searchDir": [
+                "D:/OpenOCD-20260302-0.12.0/share/openocd/scripts"
+            ],
+            "openOCDpath": "D:/OpenOCD-20260302-0.12.0/bin",
+            "gdbPath": "C:/Users/74411/AppData/Local/stm32cube/bundles/gnu-tools-for-stm32/14.3.1+st.2/bin/arm-none-eabi-gdb.exe",
+            "svdFile": "${workspaceFolder}/.vscode/STM32L051x.svd",
+            "showDevDebugOutput": "raw"
+        }
+    ]
+}
