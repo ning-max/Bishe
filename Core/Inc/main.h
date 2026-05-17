@@ -60,6 +60,18 @@ void Error_Handler(void);
 #define SPI2_CS_Pin GPIO_PIN_12
 #define SPI2_CS_GPIO_Port GPIOB
 
+/* RGB LED — active LOW */
+#define LED_R_Pin        GPIO_PIN_0
+#define LED_R_GPIO_Port  GPIOA
+#define LED_G_Pin        GPIO_PIN_1
+#define LED_G_GPIO_Port  GPIOA
+#define LED_B_Pin        GPIO_PIN_2
+#define LED_B_GPIO_Port  GPIOA
+
+/* User button — PC13, active LOW */
+#define BTN_Pin          GPIO_PIN_13
+#define BTN_GPIO_Port    GPIOC
+
 /* USER CODE BEGIN Private defines */
 
 /* USER CODE END Private defines */
