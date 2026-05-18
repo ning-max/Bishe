@@ -11,12 +11,13 @@
 #include "w25q64.h"
 #include "sensor_storage.h"
 #include "time_util.h"
+#include "rtc.h"
 
 #include <stdio.h>
 
-static void SystemClock_Config(void);
+void SystemClock_Config(void);
 
-static uint32_t last_tick, uptime, boot_ts;
+static uint32_t uptime, boot_ts;
 static uint8_t  ok_bh1750, ok_bme280, ok_flash;
 
 int main(void)
@@ -30,8 +31,6 @@ int main(void)
     MX_I2C2_Init();
     MX_SPI2_Init();
     MX_USART1_UART_Init();
-
-
 
     /* ---- W25Q64 Flash ---- */
     W25Q64_Init();
@@ -59,58 +58,56 @@ int main(void)
     else
         LED_R(1);
 
-    /* ---- Time base (compile time ≈ boot time, Beijing) ---- */
+    /* ---- Time base (compile time, Beijing) ---- */
     boot_ts = Time_CompileUnix();
 
-    /* Wait full 2s before first output (let UART settle after reset) */
-    last_tick = HAL_GetTick();
+    /* ---- RTC with LSE (32.768 kHz) for 10 s periodic Stop wakeup ---- */
+    RTC_Init();
+
+    /* Let UART settle before first output */
+    HAL_Delay(2000);
+    printf("\r\n");
 
     while (1)
     {
-        /* Kick the independent watchdog (IWDG) if enabled in option bytes */
-        IWDG->KR = 0xAAAA;
+        uptime += 10;
 
-        /* ---- 2-second sensor read ---- */
-        if (HAL_GetTick() - last_tick >= 2000) {
-            last_tick = HAL_GetTick();
-            uptime += 2;
+        LED_G(1);
 
-            LED_G(1);  /* Measure indicator ON */
+        SensorRecord rec = {0};
+        rec.timestamp = boot_ts + uptime;
 
-            SensorRecord rec = {0};
-            rec.timestamp = boot_ts + uptime;
-
-            /* BH1750 */
-            if (ok_bh1750) {
-                uint16_t lux = 0;
-                BH1750_ReadLight(&lux);
-                rec.light = lux;
-            }
-
-            /* BME280 */
-            if (ok_bme280) {
-                BME280_Data d;
-                BME280_StartMeasurement();
-                HAL_Delay(BME280_T_MEAS_MS);
-                if (BME280_ReadData(&d)) {
-                    rec.temp  = (int16_t)d.temp;
-                    rec.hum   = (uint16_t)((d.hum + 5) / 10);
-                    rec.press = d.press;
-                }
-            }
-
-            /* Save to flash (circular, max 10 records) */
-            if (ok_flash) {
-                Storage_Save(&rec);
-            }
-
-            /* ---- Print ALL W25Q64 records every time ---- */
-            if (ok_flash) {
-                Storage_PrintAll();
-            }
-
-            LED_G(0);  /* Measure indicator OFF */
+        /* BH1750 */
+        if (ok_bh1750) {
+            uint16_t lux = 0;
+            BH1750_ReadLight(&lux);
+            rec.light = lux;
         }
+
+        /* BME280 */
+        if (ok_bme280) {
+            BME280_Data d;
+            BME280_StartMeasurement();
+            HAL_Delay(BME280_T_MEAS_MS);
+            if (BME280_ReadData(&d)) {
+                rec.temp  = (int16_t)d.temp;
+                rec.hum   = (uint16_t)((d.hum + 5) / 10);
+                rec.press = d.press;
+            }
+        }
+
+        /* Save to flash and print all records */
+        if (ok_flash) {
+            Storage_Save(&rec);
+            Storage_PrintAll();
+        }
+
+        LED_G(0);
+
+        /* Enter Stop mode — RTC wakeup timer fires in 10 seconds */
+        RTC_Set10sWakeup();
+        RTC_EnterStop();
+        /* Clock restored by RTC_EnterStop(), loop continues */
     }
 }
 

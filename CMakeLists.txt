@@ -51,6 +51,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Core/Src/w25q64.c
     Core/Src/sensor_storage.c
     Core/Src/time_util.c
+    Core/Src/rtc.c
     Core/Src/retarget.c
 )
 
