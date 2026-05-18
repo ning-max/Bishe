@@ -1,5 +1,4 @@
 #include "bme280.h"
-#include <stdio.h>
 
 extern I2C_HandleTypeDef hi2c1;
 extern I2C_HandleTypeDef hi2c2;
@@ -28,17 +27,6 @@ static void bme280_wr(uint8_t reg, uint8_t val)
     HAL_I2C_Master_Transmit(i2c, dev_addr, buf, 2, 100);
 }
 
-static void i2c_scan(I2C_HandleTypeDef *hi2c, const char *name)
-{
-    uint8_t addr;
-    printf(" [DBG] %s scan:", name);
-    for (addr = 1; addr < 127; addr++) {
-        if (HAL_I2C_IsDeviceReady(hi2c, addr << 1, 1, 5) == HAL_OK)
-            printf(" 0x%02X", addr);
-    }
-    printf("\r\n");
-}
-
 static uint8_t try_bme280_at(I2C_HandleTypeDef *hi2c, uint8_t addr7bit)
 {
     uint8_t id = 0;
@@ -58,32 +46,19 @@ static uint8_t try_bme280_at(I2C_HandleTypeDef *hi2c, uint8_t addr7bit)
 uint8_t BME280_Init(void)
 {
     uint8_t calib[26], calib_h[7];
-    const char *bus_name = NULL;
 
     initialized = 0;
 
     HAL_Delay(50);
 
-    i2c_scan(&hi2c1, "I2C1");
-    i2c_scan(&hi2c2, "I2C2");
-
-    printf(" [DBG] BME280 search:\r\n");
     if (try_bme280_at(&hi2c1, 0x76)) {
-        bus_name = "I2C1";
     } else if (try_bme280_at(&hi2c1, 0x77)) {
-        bus_name = "I2C1";
     } else if (try_bme280_at(&hi2c2, 0x76)) {
-        bus_name = "I2C2";
     } else if (try_bme280_at(&hi2c2, 0x77)) {
-        bus_name = "I2C2";
     } else {
-        printf(" [DBG] BME280 not found on either bus\r\n");
         i2c = NULL;
         return 0;
     }
-
-    printf(" [DBG] BME280 found on %s at 0x%02X\r\n",
-           bus_name, (unsigned int)(dev_addr >> 1));
 
     /* Soft reset */
     bme280_wr(BME280_REG_RESET, BME280_RESET_CMD);
@@ -167,8 +142,9 @@ static uint32_t comp_press(int32_t adc_P)
         var2 = (((int64_t)dig_P8) * var4) / 524288;
         var4 = ((var4 + var1 + var2) / 256) + (((int64_t)dig_P7) * 16);
         pressure = (uint32_t)(((var4 / 2) * 100) / 128);
+        pressure = pressure / 100;  /* Bosch 64-bit returns Pa*100, convert to Pa */
     } else {
-        pressure = 3000000;
+        pressure = 30000;
     }
 
     return pressure;  /* Pa */

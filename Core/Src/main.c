@@ -10,12 +10,13 @@
 #include "bme280.h"
 #include "w25q64.h"
 #include "sensor_storage.h"
+#include "time_util.h"
 
 #include <stdio.h>
 
 static void SystemClock_Config(void);
 
-static uint32_t last_tick, uptime;
+static uint32_t last_tick, uptime, boot_ts;
 static uint8_t  ok_bh1750, ok_bme280, ok_flash;
 
 int main(void)
@@ -30,37 +31,15 @@ int main(void)
     MX_SPI2_Init();
     MX_USART1_UART_Init();
 
-    /* Boot banner */
-    printf("\r\n=================================\r\n");
-    printf(" STM32L051 Environment Monitor\r\n");
-    printf("=================================\r\n");
 
-    /* ---- Reset cause diagnostic ---- */
-    {
-        uint32_t csr = RCC->CSR;
-        printf(" [DBG] Reset flags:");
-        if (csr & RCC_CSR_IWDGRSTF)  printf(" IWDG");
-        if (csr & RCC_CSR_WWDGRSTF)  printf(" WWDG");
-        if (csr & RCC_CSR_PORRSTF)   printf(" POR");
-        if (csr & RCC_CSR_PINRSTF)   printf(" NRST");
-        if (csr & RCC_CSR_SFTRSTF)   printf(" SFT");
-        if (csr & RCC_CSR_OBLRSTF)   printf(" OBL");
-        if (csr & RCC_CSR_LPWRRSTF)  printf(" LPWR");
-        printf("\r\n");
-        __HAL_RCC_CLEAR_RESET_FLAGS();
-    }
 
     /* ---- W25Q64 Flash ---- */
     W25Q64_Init();
     uint32_t jedec = W25Q64_ReadJEDEC();
     if (jedec != 0xFFFFFF && jedec != 0x000000) {
-        printf(" [OK] W25Q64  JEDEC=0x%06X\r\n", (unsigned int)jedec);
         ok_flash = 1;
         Storage_Init();
-        printf(" [OK] Flash records: %d\r\n", Storage_Count());
-        Storage_PrintAll();
     } else {
-        printf(" [--] W25Q64  NOT FOUND\r\n");
         LED_R(1);
     }
 
@@ -68,42 +47,28 @@ int main(void)
     BH1750_Init();
     {
         uint16_t test_lux;
-        if (BH1750_ReadLight(&test_lux)) {
-            printf(" [OK] BH1750  I2C2 addr=0x23\r\n");
+        if (BH1750_ReadLight(&test_lux))
             ok_bh1750 = 1;
-        } else {
-            printf(" [--] BH1750  NOT FOUND\r\n");
+        else
             LED_R(1);
-        }
     }
 
     /* ---- BME280 Env ---- */
-    if (BME280_Init()) {
-        printf(" [OK] BME280  I2C addr=0x76\r\n");
+    if (BME280_Init())
         ok_bme280 = 1;
-    } else {
-        printf(" [--] BME280  NOT FOUND\r\n");
+    else
         LED_R(1);
-    }
 
-    printf("=================================\r\n\r\n");
+    /* ---- Time base (compile time ≈ boot time, Beijing) ---- */
+    boot_ts = Time_CompileUnix();
 
-    /* Trigger first measurement immediately (not after 2s wait) */
-    last_tick = HAL_GetTick() - 2000;
+    /* Wait full 2s before first output (let UART settle after reset) */
+    last_tick = HAL_GetTick();
 
     while (1)
     {
         /* Kick the independent watchdog (IWDG) if enabled in option bytes */
         IWDG->KR = 0xAAAA;
-
-        /* ---- Button: print stored records ---- */
-        if (Button_ReadDebounced() && ok_flash) {
-            LED_B(1);
-            printf("\r\n--- Button: Dump Flash ---\r\n");
-            Storage_PrintAll();
-            printf("--- End ---\r\n\r\n");
-            LED_B(0);
-        }
 
         /* ---- 2-second sensor read ---- */
         if (HAL_GetTick() - last_tick >= 2000) {
@@ -113,7 +78,7 @@ int main(void)
             LED_G(1);  /* Measure indicator ON */
 
             SensorRecord rec = {0};
-            rec.timestamp = uptime;
+            rec.timestamp = boot_ts + uptime;
 
             /* BH1750 */
             if (ok_bh1750) {
@@ -134,17 +99,15 @@ int main(void)
                 }
             }
 
-            /* ---- printf output ---- */
-            printf("[%02u] ", (unsigned int)uptime);
-            if (ok_bh1750)  printf("Lux:%-5u ", rec.light);
-            else            printf("Lux:---   ");
-            if (ok_bme280)  printf("T:%2d.%dC H:%2d.%d%% P:%uPa",
-                                   rec.temp / 100,
-                                   (rec.temp < 0 ? -rec.temp : rec.temp) % 100 / 10,
-                                   rec.hum / 10, rec.hum % 10,
-                                   (unsigned int)rec.press);
-            else            printf("T:--- H:--- P:---");
-            printf("\r\n");
+            /* Save to flash (circular, max 10 records) */
+            if (ok_flash) {
+                Storage_Save(&rec);
+            }
+
+            /* ---- Print ALL W25Q64 records every time ---- */
+            if (ok_flash) {
+                Storage_PrintAll();
+            }
 
             LED_G(0);  /* Measure indicator OFF */
         }

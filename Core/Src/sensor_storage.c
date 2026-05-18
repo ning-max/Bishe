@@ -1,5 +1,6 @@
 #include "sensor_storage.h"
 #include "w25q64.h"
+#include "time_util.h"
 #include <stdio.h>
 
 #define ADDR        W25Q64_STORAGE_ADDR
@@ -11,13 +12,10 @@ static uint8_t      count;
 
 static uint8_t record_valid(SensorRecord *r)
 {
-    /* Non-zero pressure outside Earth's range → garbage data */
     if (r->press != 0 && (r->press < 30000 || r->press > 200000))
         return 0;
-    /* Temperature beyond sensor operating range (-40C..+85C in C*100) */
     if (r->temp != 0 && (r->temp < -4000 || r->temp > 8500))
         return 0;
-    /* Humidity beyond 0..100% (in %RH*10) */
     if (r->hum > 1000)
         return 0;
     return 1;
@@ -35,7 +33,8 @@ void Storage_Init(void)
     if (count > MAX_RECORDS) { count = 0; return; }
     if (count > 0) {
         W25Q64_ReadData(ADDR + HDR_SZ, (uint8_t *)buf, count * REC_SZ);
-        for (uint8_t i = 0; i < count; i++) {
+        uint8_t i;
+        for (i = 0; i < count; i++) {
             if (!record_valid(&buf[i])) {
                 printf("  [!] Corrupted flash records detected, clearing...\r\n");
                 count = 0;
@@ -53,8 +52,9 @@ uint8_t Storage_Count(void) { return count; }
 void Storage_Save(SensorRecord *rec)
 {
     if (count >= MAX_RECORDS) {
-        for (uint8_t i = 0; i < MAX_RECORDS - 1; i++) buf[i] = buf[i + 1];
-        count = MAX_RECORDS - 1;
+        uint8_t i;
+        for (i = 0; i < MAX_RECORDS - 1; i++) buf[i] = buf[i + 1];
+        count = (uint8_t)(MAX_RECORDS - 1);
     }
     buf[count++] = *rec;
 
@@ -67,18 +67,24 @@ void Storage_Save(SensorRecord *rec)
 void Storage_ReadAll(SensorRecord *recs, uint8_t *cnt)
 {
     *cnt = count;
-    for (uint8_t i = 0; i < count; i++) recs[i] = buf[i];
+    uint8_t i;
+    for (i = 0; i < count; i++) recs[i] = buf[i];
 }
 
 void Storage_PrintAll(void)
 {
     if (count == 0) { printf("  (empty)\r\n"); return; }
     printf("  === Records (%d) ===\r\n", count);
-    for (uint8_t i = 0; i < count; i++) {
-        printf("  #%02d Lux:%-5u T:%2d.%dC H:%2d.%d%% P:%uPa T:%us\r\n",
-               i + 1, buf[i].light,
-               buf[i].temp / 100, (buf[i].temp < 0 ? -buf[i].temp : buf[i].temp) % 100 / 10,
+    uint8_t i;
+    for (i = 0; i < count; i++) {
+        char ts[20];
+        Time_UnixToStr(buf[i].timestamp, ts, sizeof(ts));
+        printf("  #%02d %s  Lux:%-5u T:%2d.%dC H:%2d.%d%% P:%u.%uhPa\r\n",
+               i + 1, ts, buf[i].light,
+               buf[i].temp / 100,
+               (buf[i].temp < 0 ? -buf[i].temp : buf[i].temp) % 100 / 10,
                buf[i].hum / 10, buf[i].hum % 10,
-               (unsigned int)buf[i].press, (unsigned int)buf[i].timestamp);
+               (unsigned int)(buf[i].press / 100),
+               (unsigned int)((buf[i].press % 100) / 10));
     }
 }
