@@ -1,7 +1,7 @@
 #include "sensor_storage.h"
 #include "w25q64.h"
 #include "time_util.h"
-#include <stdio.h>
+#include "retarget.h"
 
 #define ADDR        W25Q64_STORAGE_ADDR
 #define HDR_SZ      4
@@ -10,7 +10,7 @@
 static SensorRecord buf[MAX_RECORDS];
 static uint8_t      count;
 
-static uint8_t record_valid(SensorRecord *r)
+static uint8_t record_valid(const SensorRecord *r)
 {
     if (r->press != 0 && (r->press < 30000 || r->press > 200000))
         return 0;
@@ -36,7 +36,7 @@ void Storage_Init(void)
         uint8_t i;
         for (i = 0; i < count; i++) {
             if (!record_valid(&buf[i])) {
-                printf("  [!] Corrupted flash records detected, clearing...\r\n");
+                uart_puts("  [!] Corrupted flash records, clearing...\r\n");
                 count = 0;
                 hdr[0] = 0;
                 W25Q64_SectorErase(ADDR);
@@ -73,18 +73,50 @@ void Storage_ReadAll(SensorRecord *recs, uint8_t *cnt)
 
 void Storage_PrintAll(void)
 {
-    if (count == 0) { printf("  (empty)\r\n"); return; }
-    printf("  === Records (%d) ===\r\n", count);
+    if (count == 0) {
+        uart_puts("  (empty)\r\n");
+        return;
+    }
+
+    uart_puts("  === Records (");
+    uart_putu(count);
+    uart_puts(") ===\r\n");
+
     uint8_t i;
     for (i = 0; i < count; i++) {
         char ts[20];
+        int32_t t;
+        uint32_t p;
+
         Time_UnixToStr(buf[i].timestamp, ts, sizeof(ts));
-        printf("  #%02d %s  Lux:%-5u T:%2d.%dC H:%2d.%d%% P:%u.%uhPa\r\n",
-               i + 1, ts, buf[i].light,
-               buf[i].temp / 100,
-               (buf[i].temp < 0 ? -buf[i].temp : buf[i].temp) % 100 / 10,
-               buf[i].hum / 10, buf[i].hum % 10,
-               (unsigned int)(buf[i].press / 100),
-               (unsigned int)((buf[i].press % 100) / 10));
+
+        uart_puts("  #");
+        if (i + 1 < 10) uart_putc('0');
+        uart_putu(i + 1);
+        uart_putc(' ');
+
+        uart_puts(ts);
+        uart_puts("  Lux:");
+
+        uart_putu(buf[i].light);
+
+        uart_puts(" T:");
+        t = buf[i].temp;
+        if (t < 0) { uart_putc('-'); t = -t; }
+        uart_putu(t / 100);
+        uart_putc('.');
+        uart_putu((t % 100) / 10);
+        uart_puts("C H:");
+
+        uart_putu(buf[i].hum / 10);
+        uart_putc('.');
+        uart_putu(buf[i].hum % 10);
+        uart_puts("% P:");
+
+        p = buf[i].press;
+        uart_putu(p / 100);
+        uart_putc('.');
+        uart_putu((p % 100) / 10);
+        uart_puts("hPa\r\n");
     }
 }

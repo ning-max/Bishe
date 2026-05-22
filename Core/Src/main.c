@@ -12,13 +12,11 @@
 #include "sensor_storage.h"
 #include "time_util.h"
 #include "rtc.h"
-
-#include <stdio.h>
+#include "retarget.h"
 
 void SystemClock_Config(void);
 
-static uint32_t uptime, boot_ts;
-static uint8_t  ok_bh1750, ok_bme280, ok_flash;
+static uint8_t ok_bh1750, ok_bme280, ok_flash;
 
 int main(void)
 {
@@ -32,7 +30,7 @@ int main(void)
     MX_SPI2_Init();
     MX_USART1_UART_Init();
 
-    /* ---- W25Q64 Flash ---- */
+    /* W25Q64 Flash */
     W25Q64_Init();
     uint32_t jedec = W25Q64_ReadJEDEC();
     if (jedec != 0xFFFFFF && jedec != 0x000000) {
@@ -42,7 +40,7 @@ int main(void)
         LED_R(1);
     }
 
-    /* ---- BH1750 Light ---- */
+    /* BH1750 Light */
     BH1750_Init();
     {
         uint16_t test_lux;
@@ -52,39 +50,37 @@ int main(void)
             LED_R(1);
     }
 
-    /* ---- BME280 Env ---- */
+    /* BME280 Env */
     if (BME280_Init())
         ok_bme280 = 1;
     else
         LED_R(1);
 
-    /* ---- Time base (compile time, Beijing) ---- */
-    boot_ts = Time_CompileUnix();
+    /* RTC with LSE (32.768 kHz) for 10 s periodic Stop wakeup.
+       Seed with compile time on first boot; calendar persists through resets. */
+    RTC_Init(Time_CompileUnix());
 
-    /* ---- RTC with LSE (32.768 kHz) for 10 s periodic Stop wakeup ---- */
-    RTC_Init();
+#ifdef DEBUG
+    __HAL_RCC_DBGMCU_CLK_ENABLE();
+    DBGMCU->CR |= DBGMCU_CR_DBG_STOP;
+#endif
 
-    /* Let UART settle before first output */
-    HAL_Delay(2000);
-    printf("\r\n");
+    HAL_Delay(100);
+    uart_puts("\r\n");
 
     while (1)
     {
-        uptime += 10;
-
         LED_G(1);
 
         SensorRecord rec = {0};
-        rec.timestamp = boot_ts + uptime;
+        rec.timestamp = RTC_GetUnixTime();
 
-        /* BH1750 */
         if (ok_bh1750) {
             uint16_t lux = 0;
             BH1750_ReadLight(&lux);
             rec.light = lux;
         }
 
-        /* BME280 */
         if (ok_bme280) {
             BME280_Data d;
             BME280_StartMeasurement();
@@ -96,7 +92,6 @@ int main(void)
             }
         }
 
-        /* Save to flash and print all records */
         if (ok_flash) {
             Storage_Save(&rec);
             Storage_PrintAll();
@@ -104,10 +99,8 @@ int main(void)
 
         LED_G(0);
 
-        /* Enter Stop mode — RTC wakeup timer fires in 10 seconds */
         RTC_Set10sWakeup();
         RTC_EnterStop();
-        /* Clock restored by RTC_EnterStop(), loop continues */
     }
 }
 
@@ -119,7 +112,7 @@ void SystemClock_Config(void)
 
     __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE1);
 
-    /* HSE=8MHz → PLL ×8 ÷2 = 32MHz (max for STM32L051) */
+    /* HSE=8MHz -> PLL x8 /2 = 32MHz */
     osc.OscillatorType = RCC_OSCILLATORTYPE_HSE;
     osc.HSEState = RCC_HSE_ON;
     osc.PLL.PLLState = RCC_PLL_ON;
@@ -141,7 +134,6 @@ void SystemClock_Config(void)
     pclk.I2c1ClockSelection = RCC_I2C1CLKSOURCE_PCLK1;
     if (HAL_RCCEx_PeriphCLKConfig(&pclk) != HAL_OK) Error_Handler();
 
-    /* Re-configure SysTick for 32MHz HCLK after clock switch */
     HAL_SYSTICK_Config(HAL_RCC_GetHCLKFreq() / 1000);
     HAL_SYSTICK_CLKSourceConfig(SYSTICK_CLKSOURCE_HCLK);
 }
@@ -149,7 +141,7 @@ void SystemClock_Config(void)
 void Error_Handler(void)
 {
     __disable_irq();
-    LED_RGB(1, 0, 0);  /* Red on error */
+    LED_RGB(1, 0, 0);
     while (1) {}
 }
 

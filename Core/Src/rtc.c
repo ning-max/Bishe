@@ -1,69 +1,68 @@
 #include "rtc.h"
 #include "main.h"
+#include "time_util.h"
 
-/*
- * RTC register-level driver.
- *
- * We avoid the HAL RTC driver (stm32l0xx_hal_rtc.c) because it was not
- * included when CubeMX generated this project.  The RTC operations needed
- * for periodic wakeup are simple enough for direct register access.
- */
+#define RTC_WAKEUP_COUNTER  20480U  /* LSE/16 = 2048 Hz * 10 s */
 
-#define RTC_WAKEUP_COUNTER  20480U  /* LSE/16 = 2048 Hz × 10 s = 20480 ticks */
+static RTC_HandleTypeDef hrtc;
 
-static void rtc_unlock(void)
-{
-    RTC->WPR = 0xCA;
-    RTC->WPR = 0x53;
-}
-
-static void rtc_lock(void)
-{
-    RTC->WPR = 0xFF;
-}
-
-void RTC_Init(void)
+void RTC_Init(uint32_t unix_time)
 {
     RCC_OscInitTypeDef       osc  = {0};
     RCC_PeriphCLKInitTypeDef pclk = {0};
 
-    /* 1. Enable LSE (32.768 kHz external crystal on PC14/PC15) */
+    /* Enable LSE (32.768 kHz) */
     osc.OscillatorType = RCC_OSCILLATORTYPE_LSE;
     osc.LSEState       = RCC_LSE_ON;
     if (HAL_RCC_OscConfig(&osc) != HAL_OK)
         Error_Handler();
 
-    /* 2. Route LSE to RTC */
+    /* Route LSE to RTC */
     pclk.PeriphClockSelection = RCC_PERIPHCLK_RTC;
     pclk.RTCClockSelection    = RCC_RTCCLKSOURCE_LSE;
     if (HAL_RCCEx_PeriphCLKConfig(&pclk) != HAL_OK)
         Error_Handler();
 
     __HAL_RCC_RTC_ENABLE();
-
     HAL_PWR_EnableBkUpAccess();
 
-    /*
-     * 3. Enter init mode, set prescalers, exit.
-     *    LSE = 32768 Hz
-     *    async = 127 → ck_apre = 256 Hz
-     *    sync  = 255 → 1 Hz  (not used for wakeup timer, but required)
-     */
-    rtc_unlock();
-    RTC->ISR |= RTC_ISR_INIT;
-    while (!(RTC->ISR & RTC_ISR_INITF)) {}
+    /* Check whether RTC was already initialized (backup domain preserved) */
+    uint8_t was_init = (RTC->ISR & RTC_ISR_INITS) ? 1 : 0;
 
-    RTC->PRER = (127U << 16) | 255U;
+    hrtc.Instance          = RTC;
+    hrtc.Init.HourFormat   = RTC_HOURFORMAT_24;
+    hrtc.Init.AsynchPrediv = 127;
+    hrtc.Init.SynchPrediv  = 255;
+    hrtc.Init.OutPut       = RTC_OUTPUT_DISABLE;
+    hrtc.Init.OutPutPolarity = RTC_OUTPUT_POLARITY_HIGH;
+    hrtc.Init.OutPutType   = RTC_OUTPUT_TYPE_OPENDRAIN;
+    if (HAL_RTC_Init(&hrtc) != HAL_OK)
+        Error_Handler();
 
-    RTC->ISR &= ~RTC_ISR_INIT;
-    while (!(RTC->ISR & RTC_ISR_RSF)) {}
-    rtc_lock();
+    if (!was_init) {
+        /* First boot or backup domain lost — seed RTC calendar */
+        uint16_t year;
+        uint8_t  mon, day, hour, min, sec;
 
-    /*
-     * 4. Enable EXTI line 20 (RTC wakeup timer) so it can wake us from Stop.
-     */
-    EXTI->IMR  |= (1U << 20);
-    EXTI->RTSR |= (1U << 20);
+        Time_UnixToCalendar(unix_time, &year, &mon, &day, &hour, &min, &sec);
+
+        RTC_TimeTypeDef sTime = {0};
+        RTC_DateTypeDef sDate = {0};
+
+        sTime.Hours   = hour;
+        sTime.Minutes = min;
+        sTime.Seconds = sec;
+        sDate.Date    = day;
+        sDate.Month   = mon;
+        sDate.Year    = (uint8_t)(year - 2000);
+
+        HAL_RTC_SetTime(&hrtc, &sTime, RTC_FORMAT_BIN);
+        HAL_RTC_SetDate(&hrtc, &sDate, RTC_FORMAT_BIN);
+    }
+
+    /* EXTI line 20 — RTC wakeup timer, wake from Stop */
+    __HAL_RTC_WAKEUPTIMER_EXTI_ENABLE_RISING_EDGE();
+    __HAL_RTC_WAKEUPTIMER_EXTI_ENABLE_IT();
 
     HAL_NVIC_SetPriority(RTC_IRQn, 1, 0);
     HAL_NVIC_EnableIRQ(RTC_IRQn);
@@ -71,50 +70,65 @@ void RTC_Init(void)
 
 void RTC_Set10sWakeup(void)
 {
-    rtc_unlock();
+    HAL_RTCEx_SetWakeUpTimer_IT(&hrtc, RTC_WAKEUP_COUNTER,
+                                RTC_WAKEUPCLOCK_RTCCLK_DIV16);
+    __HAL_PWR_CLEAR_FLAG(PWR_FLAG_WU);
+}
 
-    /* Disable wakeup timer, wait for write-protect release */
-    RTC->CR &= ~RTC_CR_WUTE;
-    while (!(RTC->ISR & RTC_ISR_WUTWF)) {}
+static void clock_restore(void)
+{
+    RCC_OscInitTypeDef osc = {0};
+    RCC_ClkInitTypeDef clk = {0};
 
-    /* Clear wakeup flag + pending EXTI */
-    RTC->ISR &= ~RTC_ISR_WUTF;
-    EXTI->PR = (1U << 20);
+    osc.OscillatorType = RCC_OSCILLATORTYPE_HSE;
+    osc.HSEState       = RCC_HSE_ON;
+    osc.PLL.PLLState   = RCC_PLL_ON;
+    osc.PLL.PLLSource  = RCC_PLLSOURCE_HSE;
+    osc.PLL.PLLMUL     = RCC_PLLMUL_8;
+    osc.PLL.PLLDIV     = RCC_PLLDIV_2;
+    if (HAL_RCC_OscConfig(&osc) != HAL_OK)
+        Error_Handler();
 
-    /* Write reload value */
-    RTC->WUTR = RTC_WAKEUP_COUNTER;
+    clk.ClockType      = RCC_CLOCKTYPE_HCLK | RCC_CLOCKTYPE_SYSCLK
+                       | RCC_CLOCKTYPE_PCLK1 | RCC_CLOCKTYPE_PCLK2;
+    clk.SYSCLKSource   = RCC_SYSCLKSOURCE_PLLCLK;
+    clk.AHBCLKDivider  = RCC_SYSCLK_DIV1;
+    clk.APB1CLKDivider = RCC_HCLK_DIV1;
+    clk.APB2CLKDivider = RCC_HCLK_DIV1;
+    if (HAL_RCC_ClockConfig(&clk, FLASH_LATENCY_1) != HAL_OK)
+        Error_Handler();
 
-    /* Clock = RTCCLK / 16 (WUCKSEL = 00), enable wakeup timer + its interrupt */
-    RTC->CR &= ~RTC_CR_WUCKSEL;           /* 00 = RTC/16 */
-    RTC->CR |= RTC_CR_WUTIE | RTC_CR_WUTE;
-
-    /* Clear PWR wakeup flag so we can enter Stop cleanly */
-    PWR->CR |= PWR_CR_CWUF;
-
-    rtc_lock();
+    HAL_SYSTICK_Config(HAL_RCC_GetHCLKFreq() / 1000);
+    HAL_SYSTICK_CLKSourceConfig(SYSTICK_CLKSOURCE_HCLK);
 }
 
 void RTC_EnterStop(void)
 {
     extern UART_HandleTypeDef huart1;
 
-    /* Wait until UART TX shift register is empty */
     while (__HAL_UART_GET_FLAG(&huart1, UART_FLAG_TC) == RESET) {}
 
     HAL_SuspendTick();
     HAL_PWR_EnterSTOPMode(PWR_LOWPOWERREGULATOR_ON, PWR_STOPENTRY_WFI);
 
-    /*
-     * Woken by RTC wakeup timer.
-     * System clock is MSI (~2.1 MHz). Restore HSE+PLL → 32 MHz.
-     */
-    SystemClock_Config();
+    clock_restore();
     HAL_ResumeTick();
+}
+
+uint32_t RTC_GetUnixTime(void)
+{
+    RTC_TimeTypeDef sTime = {0};
+    RTC_DateTypeDef sDate = {0};
+
+    HAL_RTC_GetTime(&hrtc, &sTime, RTC_FORMAT_BIN);
+    HAL_RTC_GetDate(&hrtc, &sDate, RTC_FORMAT_BIN);
+
+    return Time_CalendarToUnix(2000 + (uint16_t)sDate.Year,
+                               sDate.Month, sDate.Date,
+                               sTime.Hours, sTime.Minutes, sTime.Seconds);
 }
 
 void RTC_IRQHandler(void)
 {
-    /* Clear RTC wakeup flag — prevents interrupt from firing again */
-    RTC->ISR &= ~RTC_ISR_WUTF;
-    EXTI->PR = (1U << 20);
+    HAL_RTCEx_WakeUpTimerIRQHandler(&hrtc);
 }

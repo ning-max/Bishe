@@ -1,5 +1,10 @@
 #include "time_util.h"
 
+static uint8_t is_leap(uint16_t y)
+{
+    return (y % 4 == 0 && y % 100 != 0) || (y % 400 == 0);
+}
+
 static uint8_t month_num(const char *m)
 {
     if (m[0] == 'J' && m[1] == 'a') return 1;
@@ -17,10 +22,7 @@ static uint8_t month_num(const char *m)
     return 1;
 }
 
-static uint8_t is_leap(uint16_t y)
-{
-    return (y % 4 == 0 && y % 100 != 0) || (y % 400 == 0);
-}
+static const uint8_t mdays[] = {0,31,28,31,30,31,30,31,31,30,31,30,31};
 
 uint32_t Time_CompileUnix(void)
 {
@@ -41,7 +43,41 @@ uint32_t Time_CompileUnix(void)
     uint8_t min  = (time[3] - '0') * 10 + (time[4] - '0');
     uint8_t sec  = (time[6] - '0') * 10 + (time[7] - '0');
 
-    static const uint8_t mdays[] = {0,31,28,31,30,31,30,31,31,30,31,30,31};
+    return Time_CalendarToUnix(year, mon, day, hour, min, sec);
+}
+
+void Time_UnixToCalendar(uint32_t ts, uint16_t *year, uint8_t *mon,
+                         uint8_t *day, uint8_t *hour, uint8_t *min, uint8_t *sec)
+{
+    uint32_t days = ts / 86400;
+    uint32_t sod  = ts % 86400;
+
+    *year = 1970;
+    while (1) {
+        uint16_t dy = 365 + is_leap(*year);
+        if (days < dy) break;
+        days -= dy;
+        (*year)++;
+    }
+
+    uint8_t leap = is_leap(*year);
+    *mon = 1;
+    for (; *mon <= 12; (*mon)++) {
+        uint8_t md = mdays[*mon];
+        if (*mon == 2 && leap) md = 29;
+        if (days < md) break;
+        days -= md;
+    }
+    *day = (uint8_t)days + 1;
+
+    *hour = sod / 3600;
+    *min  = (sod % 3600) / 60;
+    *sec  = sod % 60;
+}
+
+uint32_t Time_CalendarToUnix(uint16_t year, uint8_t mon, uint8_t day,
+                             uint8_t hour, uint8_t min, uint8_t sec)
+{
     uint32_t days = 0;
     uint16_t y;
     for (y = 1970; y < year; y++)
@@ -61,31 +97,10 @@ uint32_t Time_CompileUnix(void)
 void Time_UnixToStr(uint32_t ts, char *buf, uint8_t buf_sz)
 {
     (void)buf_sz;
-    uint32_t days = ts / 86400;
-    uint32_t sod  = ts % 86400;
 
-    uint16_t year = 1970;
-    while (1) {
-        uint16_t dy = 365 + is_leap(year);
-        if (days < dy) break;
-        days -= dy;
-        year++;
-    }
-
-    static const uint8_t mdays[] = {0,31,28,31,30,31,30,31,31,30,31,30,31};
-    uint8_t leap = is_leap(year);
-    uint8_t mon;
-    for (mon = 1; mon <= 12; mon++) {
-        uint8_t md = mdays[mon];
-        if (mon == 2 && leap) md = 29;
-        if (days < md) break;
-        days -= md;
-    }
-    uint8_t day = (uint8_t)days + 1;
-
-    uint8_t hour = sod / 3600;
-    uint8_t min  = (sod % 3600) / 60;
-    uint8_t sec  = sod % 60;
+    uint16_t year;
+    uint8_t  mon, day, hour, min, sec;
+    Time_UnixToCalendar(ts, &year, &mon, &day, &hour, &min, &sec);
 
     /* "YYYY-MM-DD HH:MM:SS" */
     buf[0]  = '0' + year / 1000;
